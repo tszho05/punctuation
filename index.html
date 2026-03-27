@@ -164,6 +164,12 @@
 <div id="game-container">
     <div id="top-ui">
         <div class="status-box">分數: <span id="score">0</span></div>
+        <button id="music-toggle" onclick="toggleMusic()"
+                style="pointer-events:auto; font-size:15px; padding:8px 14px; border-radius:20px;
+                       background:#6A5ACD; box-shadow:0 4px 0 #483D8B; color:white; border:none;
+                       font-weight:900; cursor:pointer; font-family:inherit;">
+            🔇 音樂
+        </button>
         <div class="status-box">時間: <span id="time">60</span>s</div>
     </div>
     
@@ -226,11 +232,104 @@
 
     const hook = {
         x: 0, y: 0, angle: 0, length: 20, maxLength: 800,
-        state: 'SWINGING', 
+        state: 'SWINGING',
         swingSpeed: 0.005, swingDirection: 1,
         shootSpeed: 7, baseReelSpeed: 8, reelSpeed: 8,
         caughtItem: null, caughtStatus: null
     };
+
+    // 圖片載入（後備：若圖片未就緒則用原有 Canvas 繪圖）
+    const bgImage = new Image();
+    const minerImage = new Image();
+    let bgImageReady = false;
+    let minerImageReady = false;
+    bgImage.onload = () => { bgImageReady = true; };
+    bgImage.onerror = () => { bgImageReady = false; };
+    minerImage.onload = () => { minerImageReady = true; };
+    minerImage.onerror = () => { minerImageReady = false; };
+    bgImage.src = 'images/bg.png';
+    minerImage.src = 'images/miner.png';
+
+    // Web Audio API 音效系統（延遲初始化，符合瀏覽器自動播放限制）
+    let audioCtx = null;
+    function getAudioCtx() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        return audioCtx;
+    }
+
+    function playCorrectSound() {
+        const ac = getAudioCtx();
+        [523.25, 659.25, 783.99].forEach((freq, i) => {
+            const osc = ac.createOscillator(), gain = ac.createGain();
+            osc.connect(gain); gain.connect(ac.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, ac.currentTime + i * 0.12);
+            gain.gain.setValueAtTime(0.4, ac.currentTime + i * 0.12);
+            gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + i * 0.12 + 0.25);
+            osc.start(ac.currentTime + i * 0.12);
+            osc.stop(ac.currentTime + i * 0.12 + 0.25);
+        });
+    }
+
+    function playWrongSound() {
+        const ac = getAudioCtx();
+        const osc = ac.createOscillator(), gain = ac.createGain();
+        osc.connect(gain); gain.connect(ac.destination);
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(300, ac.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(80, ac.currentTime + 0.4);
+        gain.gain.setValueAtTime(0.3, ac.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.4);
+        osc.start(ac.currentTime);
+        osc.stop(ac.currentTime + 0.4);
+    }
+
+    function playShootSound() {
+        const ac = getAudioCtx();
+        const osc = ac.createOscillator(), filter = ac.createBiquadFilter(), gain = ac.createGain();
+        osc.connect(filter); filter.connect(gain); gain.connect(ac.destination);
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(800, ac.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(100, ac.currentTime + 0.15);
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(600, ac.currentTime);
+        gain.gain.setValueAtTime(0.2, ac.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.15);
+        osc.start(ac.currentTime);
+        osc.stop(ac.currentTime + 0.15);
+    }
+
+    // 背景音樂（五聲音階循環旋律）
+    let musicInterval = null, musicEnabled = false, musicStep = 0;
+    const melodyNotes = [293.66, 329.63, 392.00, 440.00, 523.25]; // D4 E4 G4 A4 C5
+    const melodyPattern = [0, 2, 3, 4, 3, 2, 0, -1]; // -1 = 休止
+
+    function playMelodyStep() {
+        const ac = getAudioCtx();
+        const noteIndex = melodyPattern[musicStep++ % melodyPattern.length];
+        if (noteIndex === -1) return;
+        const osc = ac.createOscillator(), gain = ac.createGain();
+        osc.connect(gain); gain.connect(ac.destination);
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(melodyNotes[noteIndex], ac.currentTime);
+        gain.gain.setValueAtTime(0.15, ac.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.18);
+        osc.start(ac.currentTime);
+        osc.stop(ac.currentTime + 0.2);
+    }
+
+    function startMusic() {
+        if (musicInterval) return;
+        musicStep = 0; playMelodyStep();
+        musicInterval = setInterval(playMelodyStep, 250);
+    }
+    function stopMusic() { clearInterval(musicInterval); musicInterval = null; }
+    function toggleMusic() {
+        musicEnabled = !musicEnabled;
+        document.getElementById('music-toggle').textContent = musicEnabled ? '🔊 音樂' : '🔇 音樂';
+        musicEnabled ? startMusic() : stopMusic();
+    }
 
     function resizeCanvas() {
         const container = document.getElementById('game-container');
@@ -399,12 +498,14 @@
     function handleCaughtItem(item, status) {
         if (status === 'correct') {
             score += 10;
+            playCorrectSound();
             createFloatingText("答對了！ +10", hook.x, hook.y - 20, "#32CD32");
             setTimeout(generateLevel, 300); // 延遲一下讓玩家看清楚加分
         } else {
             score -= 5;
+            playWrongSound();
             createFloatingText("答錯了！ -5", hook.x, hook.y - 20, "#FF0000");
-            if(items.length < 3) generateLevel(); 
+            if(items.length < 3) generateLevel();
         }
         scoreEl.innerText = score;
     }
@@ -416,17 +517,26 @@
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 礦工基座
-        ctx.fillStyle = "#A0522D";
-        ctx.beginPath();
-        ctx.arc(hook.x, hook.y, 30, Math.PI, 0);
-        ctx.fill();
-        
-        // 礦工頭部
-        ctx.fillStyle = "#FFA07A"; 
-        ctx.beginPath(); ctx.arc(hook.x, hook.y - 25, 15, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = "#FFD700"; 
-        ctx.beginPath(); ctx.arc(hook.x, hook.y - 28, 16, Math.PI, 0); ctx.fill();
+        // 背景圖（若已載入則覆蓋整個 canvas，否則 CSS 漸層後備）
+        if (bgImageReady) {
+            ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+        }
+
+        // 礦工角色（若已載入則用圖片，否則用原有 Canvas 形狀後備）
+        if (minerImageReady) {
+            const mW = 80, mH = 100;
+            ctx.drawImage(minerImage, hook.x - mW / 2, hook.y - mH, mW, mH);
+        } else {
+            // 後備：原有 canvas 原始形狀
+            ctx.fillStyle = "#A0522D";
+            ctx.beginPath();
+            ctx.arc(hook.x, hook.y, 30, Math.PI, 0);
+            ctx.fill();
+            ctx.fillStyle = "#FFA07A";
+            ctx.beginPath(); ctx.arc(hook.x, hook.y - 25, 15, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#FFD700";
+            ctx.beginPath(); ctx.arc(hook.x, hook.y - 28, 16, Math.PI, 0); ctx.fill();
+        }
 
         // 繩子
         const tipX = hook.x + hook.length * Math.sin(hook.angle);
@@ -515,6 +625,7 @@
     function shoot() {
         if (gameState === 'PLAYING' && hook.state === 'SWINGING') {
             hook.state = 'SHOOTING';
+            playShootSound();
         }
     }
 
@@ -530,7 +641,8 @@
         
         generateLevel();
         gameState = 'PLAYING';
-        
+        if (musicEnabled) startMusic();
+
         if (animationId) cancelAnimationFrame(animationId);
         gameLoop();
 
@@ -546,6 +658,7 @@
 
     function endGame() {
         gameState = 'GAMEOVER';
+        stopMusic();
         clearInterval(gameInterval);
         finalScoreEl.innerText = score;
         gameOverScreen.classList.remove('hidden');
