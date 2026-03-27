@@ -229,6 +229,8 @@
     let currentQuestion = null;
     let floatingTexts = [];
     let items = [];
+    let dustParticles = [];
+    let parallaxTick = 0;
 
     const hook = {
         x: 0, y: 0, angle: 0, length: 20, maxLength: 800,
@@ -338,6 +340,7 @@
         hook.x = canvas.width / 2;
         hook.y = canvas.height * 0.3; 
         hook.maxLength = Math.hypot(canvas.width, canvas.height);
+        resetDustParticles();
     }
     window.addEventListener('resize', resizeCanvas);
 
@@ -431,7 +434,117 @@
         animationId = requestAnimationFrame(gameLoop);
     }
 
+    function resetDustParticles() {
+        const soilTop = canvas.height * 0.45;
+        const particleCount = Math.max(8, Math.round((canvas.width / 1200) * 20));
+        dustParticles = Array.from({ length: particleCount }, () => ({
+            x: Math.random() * canvas.width,
+            y: soilTop + Math.random() * (canvas.height - soilTop),
+            vx: (Math.random() - 0.5) * 0.12,
+            vy: -0.03 - Math.random() * 0.08,
+            radius: 0.8 + Math.random() * 1.8,
+            alpha: 0.05 + Math.random() * 0.08,
+            phase: Math.random() * Math.PI * 2
+        }));
+    }
+
+    function updateDustParticles() {
+        const soilTop = canvas.height * 0.45;
+        for (const p of dustParticles) {
+            p.phase += 0.02;
+            p.x += p.vx + Math.sin(p.phase) * 0.05;
+            p.y += p.vy;
+
+            if (p.x < -5) p.x = canvas.width + 5;
+            if (p.x > canvas.width + 5) p.x = -5;
+            if (p.y < soilTop - 5) {
+                p.y = canvas.height + Math.random() * 16;
+                p.x = Math.random() * canvas.width;
+            }
+        }
+    }
+
+    function drawFallbackBackground() {
+        const soilTop = canvas.height * 0.45;
+
+        const sky = ctx.createLinearGradient(0, 0, 0, soilTop);
+        sky.addColorStop(0, '#86d8ff');
+        sky.addColorStop(0.55, '#9fe2ff');
+        sky.addColorStop(1, '#d8eef8');
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, soilTop);
+
+        const haze = ctx.createLinearGradient(0, soilTop - 70, 0, soilTop + 28);
+        haze.addColorStop(0, 'rgba(255,255,255,0)');
+        haze.addColorStop(0.6, 'rgba(244,243,235,0.35)');
+        haze.addColorStop(1, 'rgba(220,200,170,0.12)');
+        ctx.fillStyle = haze;
+        ctx.fillRect(0, soilTop - 70, canvas.width, 100);
+
+        const soil = ctx.createLinearGradient(0, soilTop, 0, canvas.height);
+        soil.addColorStop(0, '#9a5f34');
+        soil.addColorStop(0.45, '#7d4a28');
+        soil.addColorStop(1, '#5e351d');
+        ctx.fillStyle = soil;
+        ctx.fillRect(0, soilTop, canvas.width, canvas.height - soilTop);
+
+        ctx.strokeStyle = 'rgba(65, 34, 19, 0.18)';
+        ctx.lineWidth = 2;
+        for (let y = soilTop + 14; y < canvas.height; y += 18) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvas.width, y + Math.sin(y * 0.04) * 3);
+            ctx.stroke();
+        }
+    }
+
+    function drawMidgroundLayer() {
+        const soilTop = canvas.height * 0.45;
+        const offset = (parallaxTick * 0.22) % (canvas.width + 220);
+
+        // 遠山輪廓（低透明）
+        ctx.fillStyle = 'rgba(84, 118, 134, 0.12)';
+        ctx.beginPath();
+        ctx.moveTo(0, soilTop + 12);
+        ctx.lineTo(canvas.width * 0.15, soilTop - 22);
+        ctx.lineTo(canvas.width * 0.36, soilTop + 8);
+        ctx.lineTo(canvas.width * 0.56, soilTop - 18);
+        ctx.lineTo(canvas.width * 0.74, soilTop + 9);
+        ctx.lineTo(canvas.width, soilTop - 10);
+        ctx.lineTo(canvas.width, soilTop + 42);
+        ctx.lineTo(0, soilTop + 42);
+        ctx.closePath();
+        ctx.fill();
+
+        // 雲朵平移（簡單視差）
+        const cloudY = soilTop * 0.42;
+        const cloudSpacing = 220;
+        for (let i = -1; i < 5; i++) {
+            const x = i * cloudSpacing + offset - 110;
+            ctx.fillStyle = 'rgba(255,255,255,0.14)';
+            ctx.beginPath();
+            ctx.ellipse(x, cloudY + (i % 2) * 12, 44, 16, 0, 0, Math.PI * 2);
+            ctx.ellipse(x + 28, cloudY + 2 + (i % 2) * 12, 36, 14, 0, 0, Math.PI * 2);
+            ctx.ellipse(x - 26, cloudY + 4 + (i % 2) * 12, 30, 12, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    function drawForegroundDust() {
+        ctx.fillStyle = '#f8ead9';
+        for (const p of dustParticles) {
+            ctx.globalAlpha = p.alpha;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }
+
     function update() {
+        parallaxTick += 1;
+        updateDustParticles();
+
         if (hook.state === 'SWINGING') {
             hook.angle += hook.swingSpeed * hook.swingDirection;
             if (hook.angle > Math.PI * 0.4) {
@@ -517,10 +630,13 @@
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 背景圖（若已載入則覆蓋整個 canvas，否則 CSS 漸層後備）
+        // 背景層：先畫 fallback 漸層，再嘗試覆蓋背景圖
+        drawFallbackBackground();
         if (bgImageReady) {
             ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
         }
+        // 中景層：遠山/雲朵低透明視差
+        drawMidgroundLayer();
 
         // 礦工角色（若已載入則用圖片，否則用原有 Canvas 形狀後備）
         if (minerImageReady) {
@@ -555,6 +671,8 @@
 
         if (hook.caughtItem) drawItem(hook.caughtItem);
         items.forEach(drawItem);
+        // 前景層：泥土上的輕微漂浮塵埃
+        drawForegroundDust();
 
         floatingTexts.forEach(ft => {
             ctx.fillStyle = `rgba(${hexToRgb(ft.color)}, ${ft.alpha})`;
